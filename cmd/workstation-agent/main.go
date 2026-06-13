@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,6 +25,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--status" || os.Args[1] == "status") {
+		fmt.Print(resolveStatus(context.Background()).String())
+		return
+	}
+
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	addr := getenv("WSA_ADDR", "127.0.0.1:8444")
