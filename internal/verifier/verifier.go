@@ -73,7 +73,7 @@ func VerifyToken(ctx context.Context, client *http.Client, token string) (string
 	if err != nil {
 		return "", fmt.Errorf("re-executing token failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("STS rejected the token (status %d)", resp.StatusCode)

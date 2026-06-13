@@ -57,7 +57,7 @@ func imdsToken(ctx context.Context, client *http.Client) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return strings.TrimSpace(string(b)), nil
 }
@@ -72,7 +72,7 @@ func imdsGet(ctx context.Context, client *http.Client, token, path string) (stri
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("imds %s returned %d", path, resp.StatusCode)
