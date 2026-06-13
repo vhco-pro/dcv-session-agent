@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/vhco-pro/workstation-agent/internal/identity"
+	"github.com/vhco-pro/workstation-agent/internal/idle"
 	"github.com/vhco-pro/workstation-agent/internal/session"
 	"github.com/vhco-pro/workstation-agent/internal/verifier"
 )
@@ -56,12 +57,24 @@ func main() {
 	// Some deployments point auth-token-verifier at the bare URL; accept root too.
 	mux.Handle("/", v)
 
+	// Host-wide idle accounting (MU-07): stop the instance once every session has
+	// zero connections for the idle window. Replaces v1's single-console idle check.
+	accountant := &idle.Accountant{
+		Count:       func(ctx context.Context) (int, error) { return session.CountConnections(ctx, session.DefaultRunner) },
+		Stop:        idle.StopSelf(session.DefaultRunner),
+		IdleTimeout: getDuration("WSA_IDLE_TIMEOUT", 30*time.Minute),
+		Interval:    getDuration("WSA_IDLE_INTERVAL", time.Minute),
+		Log:         log,
+	}
+	go func() { _ = accountant.Run(context.Background()) }()
+
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Info("workstation-agent listening", "addr", addr, "provisioning", prov.Name())
+	log.Info("workstation-agent listening", "addr", addr, "provisioning", prov.Name(),
+		"idleTimeout", accountant.IdleTimeout, "idleInterval", accountant.Interval)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Error("server exited", "err", err)
 		os.Exit(1)
@@ -71,6 +84,17 @@ func main() {
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+// getDuration parses a duration env var (e.g. "30m"); falls back on absence or
+// parse error. Set to "0" to disable idle accounting.
+func getDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return fallback
 }
