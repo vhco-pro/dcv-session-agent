@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/vhco-pro/workstation-agent/internal/authz"
 )
@@ -55,7 +57,8 @@ func VerifyToken(ctx context.Context, client *http.Client, token string) (string
 	if u.Scheme != "https" {
 		return "", fmt.Errorf("token must be https, got %q", u.Scheme)
 	}
-	if !stsHostRE.MatchString(u.Hostname()) {
+	// Host is case-insensitive (DNS); lowercase before matching the STS allowlist.
+	if !stsHostRE.MatchString(strings.ToLower(u.Hostname())) {
 		return "", fmt.Errorf("token endpoint %q is not an STS host", u.Hostname())
 	}
 	if u.Query().Get("Action") != "GetCallerIdentity" {
@@ -90,11 +93,22 @@ type Handler struct {
 	Log    *slog.Logger
 }
 
-// NewHandler builds a verifier Handler. A nil client uses http.DefaultClient and
-// a nil logger discards logs.
+// NoRedirectClient returns an http.Client that NEVER follows redirects — the
+// token verifier re-executes a client-supplied URL, so following a 30x to an
+// unvalidated host would be an SSRF primitive. The STS host allowlist is only
+// checked on the first hop, so redirects must be refused outright.
+func NoRedirectClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// NewHandler builds a verifier Handler. A nil client uses a no-redirect client
+// and a nil logger discards logs.
 func NewHandler(client *http.Client, m MapIdentity, log *slog.Logger) *Handler {
 	if client == nil {
-		client = http.DefaultClient
+		client = NoRedirectClient(10 * time.Second)
 	}
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -133,10 +147,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// DCV authorizes the connection when the returned username is permitted on
-	// the requested session. The session is named after its owner, so a verified
-	// identity may only reach its own session.
-	if sessionID != "" && sessionID != user {
+	// The session is named after its owner, so a verified identity may only reach
+	// its own session. Require an exact match — an empty sessionId (which the DCV
+	// contract always supplies) is therefore denied, closing the catch-all path to
+	// a no-session-binding bypass.
+	if sessionID != user {
 		h.Log.Warn("identity/session mismatch", "user", user, "sessionId", sessionID)
 		writeDeny(w, "not authorized for this session")
 		return

@@ -1,11 +1,18 @@
 // Package identity maps a verified AWS caller identity (an STS ARN) to a Linux
 // username.
 //
-// The mapping must be byte-for-byte identical on the client (which targets the
-// DCV session named after the user) and in the verifier (which authorizes the
-// connection). Keeping it in one place, shared in spirit with the client's rule,
-// is deliberate — a mismatch would let a validated user be denied their own
-// session. See spec CL-01 / MU-04.
+// This rule MUST stay byte-for-byte identical to the client's rule
+// (SSMConnect/Auth/IdentityMapper.swift): the client targets the DCV session
+// named after the user, and the agent's verifier authorizes the connection by
+// the same name. A mismatch would deny a validated user their own session
+// (spec CL-01 / MU-04).
+//
+// Security: the mapping is **reject-based, not transform-based**. It refuses any
+// role-session-name that does not *already* reduce (lowercase + drop the email
+// domain) to a safe, unambiguous Linux username, rather than silently deleting
+// characters or truncating — both of which could merge two distinct identities
+// into the same account (cross-user access). Reserved/system names are refused
+// outright.
 package identity
 
 import (
@@ -14,49 +21,55 @@ import (
 	"strings"
 )
 
-// invalidChars matches anything not allowed in the conservative Linux username
-// charset we target ([a-z0-9_-]).
-var invalidChars = regexp.MustCompile(`[^a-z0-9_-]`)
+// safeName is the only shape we accept for a Linux username: must start with a
+// lowercase letter, then lowercase alphanumerics / `-` / `_`, max 32 chars.
+var safeName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
-// maxLen is a safe upper bound for portable Linux usernames.
-const maxLen = 32
+// reserved usernames we must never map to (system/service accounts). The
+// must-start-with-a-letter rule already blocks many; this is belt-and-braces for
+// names that are valid-looking but privileged.
+var reserved = map[string]bool{
+	"root": true, "daemon": true, "bin": true, "sys": true, "sync": true,
+	"games": true, "man": true, "lp": true, "mail": true, "news": true,
+	"proxy": true, "www-data": true, "backup": true, "list": true, "nobody": true,
+	"systemd-network": true, "dbus": true, "sshd": true, "rpc": true,
+	"dcv": true, "dcvsmagent": true, "ec2-user": true, "ssm-user": true,
+	"admin": true, "ubuntu": true, "centos": true,
+}
 
-// FromARN extracts the role-session-name from an STS assumed-role ARN and
-// derives a Linux username from it.
-//
-// For an SSO login the role-session-name is the user's identity, e.g.
-//
-//	arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_.../alice@example.com
-//	                                                          ^^^^^^^^^^^^^^^^^ role-session-name
-//
-// which Sanitize turns into "alice".
+// MappingError describes why an identity could not be mapped to a safe username.
+type MappingError struct{ reason string }
+
+func (e MappingError) Error() string { return "identity: " + e.reason }
+
+// FromARN extracts the role-session-name (the segment after the last `/`) from an
+// assumed-role ARN and maps it to a Linux username, rejecting anything ambiguous
+// or privileged.
 func FromARN(arn string) (string, error) {
 	i := strings.LastIndexByte(arn, '/')
 	if i < 0 || i == len(arn)-1 {
-		return "", fmt.Errorf("identity: ARN has no role-session-name: %q", arn)
+		return "", MappingError{fmt.Sprintf("ARN has no role-session-name: %q", arn)}
 	}
 	return Sanitize(arn[i+1:])
 }
 
-// Sanitize turns a raw SSO username into a valid, stable Linux username.
+// Sanitize reduces a raw SSO username to a Linux username and validates it.
 //
-// Default rule (deliberately org-agnostic — no environment-specific assumptions
-// are baked in): take the local-part before any '@', lowercase it, drop every
-// character outside [a-z0-9_-], and trim to 32 characters. Organisations that
-// need a different rule (e.g. stripping an account-type suffix) supply it as
-// configuration rather than patching this default.
+// Reduction is minimal and lossless-or-reject: take the local-part before any
+// `@`, lowercase it. The result must then match ^[a-z][a-z0-9_-]{0,31}$ and not
+// be reserved — otherwise it is REJECTED. We never strip "illegal" characters or
+// truncate, because either could collapse two distinct identities into one user.
 func Sanitize(raw string) (string, error) {
 	s := raw
 	if at := strings.IndexByte(s, '@'); at >= 0 {
 		s = s[:at]
 	}
 	s = strings.ToLower(s)
-	s = invalidChars.ReplaceAllString(s, "")
-	if s == "" {
-		return "", fmt.Errorf("identity: %q sanitized to an empty username", raw)
+	if !safeName.MatchString(s) {
+		return "", MappingError{fmt.Sprintf("%q does not reduce to a safe username (must be ^[a-z][a-z0-9_-]{0,31}$)", raw)}
 	}
-	if len(s) > maxLen {
-		s = s[:maxLen]
+	if reserved[s] {
+		return "", MappingError{fmt.Sprintf("%q maps to a reserved/system username", raw)}
 	}
 	return s, nil
 }

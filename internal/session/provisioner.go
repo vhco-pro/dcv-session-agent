@@ -9,7 +9,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strconv"
+	"strings"
 )
+
+// minUserUID is the floor for a regular (non-system) account. The agent refuses
+// to provision or adopt any account below it, so a username that slipped past the
+// identity-mapping guard can never land a colleague in a system/service account.
+const minUserUID = 1000
 
 // Runner executes a command and returns its combined output. It is the single
 // boundary to the OS, injected so the package is fully unit-testable.
@@ -43,10 +50,17 @@ func (p *LocalProvisioner) Name() string { return "local" }
 // password is ever set — identity is proven by the AWS token, not a secret
 // (spec NF-01).
 func (p *LocalProvisioner) EnsureUser(ctx context.Context, username string) error {
-	if _, err := p.Run(ctx, "id", "-u", username); err == nil {
-		return nil // already exists
+	if out, err := p.Run(ctx, "id", "-u", username); err == nil {
+		// Already exists — refuse to adopt a system/service account (UID < 1000).
+		uid, perr := strconv.Atoi(strings.TrimSpace(string(out)))
+		if perr != nil || uid < minUserUID {
+			return fmt.Errorf("local: refusing to use existing non-regular account %q (uid %q)", username, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
-	if out, err := p.Run(ctx, "useradd", "--create-home", "--shell", "/bin/bash", username); err != nil {
+	// `--` terminates options so a username can never be parsed as a flag (defense
+	// in depth; the identity layer already requires it to start with a letter).
+	if out, err := p.Run(ctx, "useradd", "--create-home", "--shell", "/bin/bash", "--", username); err != nil {
 		return fmt.Errorf("local: useradd %q: %w (%s)", username, err, out)
 	}
 	p.Log.Info("created local user", "user", username)

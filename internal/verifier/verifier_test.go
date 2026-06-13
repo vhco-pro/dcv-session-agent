@@ -116,6 +116,13 @@ func TestHandler_DCVContract(t *testing.T) {
 		}
 	})
 
+	t.Run("empty sessionId -> no (no-binding bypass closed)", func(t *testing.T) {
+		rr := postForm(h, url.Values{"sessionId": {""}, "authenticationToken": {token}})
+		if body := rr.Body.String(); !strings.Contains(body, `result="no"`) {
+			t.Errorf("got %q, want deny for empty sessionId", body)
+		}
+	})
+
 	t.Run("valid token but authz denies -> no", func(t *testing.T) {
 		denying := NewHandler(srv.Client(), identity.FromARN, nil)
 		denying.Authz = denyAll{}

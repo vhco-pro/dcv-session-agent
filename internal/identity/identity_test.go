@@ -2,72 +2,72 @@ package identity
 
 import "testing"
 
-func TestFromARN(t *testing.T) {
-	tests := []struct {
-		name    string
-		arn     string
-		want    string
-		wantErr bool
-	}{
-		{
-			name: "sso assumed-role with email session name",
-			arn:  "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_AdministratorAccess_abc/alice@example.com",
-			want: "alice",
-		},
-		{
-			name: "session name with hyphen suffix is kept (org-agnostic default)",
-			arn:  "arn:aws:sts::823091238322:assumed-role/AWSReservedSSO_PowerUserAccess_x/DL6544-A@engie.com",
-			want: "dl6544-a",
-		},
-		{
-			name: "instance role session name",
-			arn:  "arn:aws:sts::123456789012:assumed-role/workstation-role/i-00c45ce9e5a87cd60",
-			want: "i-00c45ce9e5a87cd60",
-		},
-		{name: "no slash", arn: "not-an-arn", wantErr: true},
-		{name: "trailing slash", arn: "arn:aws:sts::1:assumed-role/role/", wantErr: true},
-		{name: "session name all symbols", arn: "arn:aws:sts::1:assumed-role/role/@@@", wantErr: true},
+func TestFromARN_Valid(t *testing.T) {
+	cases := map[string]string{
+		"arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_AdministratorAccess_abc/alice@example.com": "alice",
+		"arn:aws:sts::823091238322:assumed-role/AWSReservedSSO_PowerUserAccess_x/DL6544-A@engie.com":       "dl6544-a",
+		"arn:aws:sts::123456789012:assumed-role/workstation-role/i-00c45ce9e5a87cd60":                      "i-00c45ce9e5a87cd60",
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := FromARN(tt.arn)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("FromARN(%q) err = %v, wantErr %v", tt.arn, err, tt.wantErr)
-			}
-			if got != tt.want {
-				t.Errorf("FromARN(%q) = %q, want %q", tt.arn, got, tt.want)
-			}
-		})
+	for arn, want := range cases {
+		got, err := FromARN(arn)
+		if err != nil {
+			t.Errorf("FromARN(%q) unexpected error: %v", arn, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("FromARN(%q) = %q, want %q", arn, got, want)
+		}
 	}
 }
 
-func TestSanitizeIsStable(t *testing.T) {
-	// The same input must always map to the same username (client and verifier
-	// must agree), and the output must be a valid Linux username.
-	in := "Alice.Smith+test@example.com"
-	a, err := Sanitize(in)
-	if err != nil {
-		t.Fatal(err)
+func TestFromARN_Rejected(t *testing.T) {
+	bad := []string{
+		"not-an-arn",                             // no slash
+		"arn:aws:sts::1:assumed-role/role/",      // trailing slash (empty session name)
+		"arn:aws:sts::1:assumed-role/role/@@@",   // empties out
+		"arn:aws:sts::1:assumed-role/role/root",  // reserved
+		"arn:aws:sts::1:assumed-role/role/ec2-user", // reserved
 	}
-	b, _ := Sanitize(in)
-	if a != b {
-		t.Fatalf("Sanitize not deterministic: %q vs %q", a, b)
-	}
-	if a != "alicesmithtest" {
-		t.Errorf("Sanitize(%q) = %q, want %q", in, a, "alicesmithtest")
+	for _, arn := range bad {
+		if got, err := FromARN(arn); err == nil {
+			t.Errorf("FromARN(%q) = %q, want error", arn, got)
+		}
 	}
 }
 
-func TestSanitizeTruncates(t *testing.T) {
-	long := ""
-	for i := 0; i < 50; i++ {
-		long += "a"
+func TestSanitize_RejectsAmbiguousAndUnsafe(t *testing.T) {
+	reject := []string{
+		"Alice.Smith+test@example.com", // dots/plus would be silently stripped -> reject
+		"a.l.i.c.e@example.com",        // would merge into "alice" -> reject
+		"-foo@example.com",             // leading dash (arg-injection)
+		"1abc@example.com",             // leading digit
+		"root",                         // reserved
+		"daemon",                       // reserved
+		"",                             // empty
+		"averyveryveryveryveryverylongusername33", // > 32 chars -> reject (no silent truncation)
 	}
-	got, err := Sanitize(long)
-	if err != nil {
-		t.Fatal(err)
+	for _, in := range reject {
+		if got, err := Sanitize(in); err == nil {
+			t.Errorf("Sanitize(%q) = %q, want error", in, got)
+		}
 	}
-	if len(got) != maxLen {
-		t.Errorf("len = %d, want %d", len(got), maxLen)
+}
+
+func TestSanitize_AcceptsCleanNames(t *testing.T) {
+	ok := map[string]string{
+		"alice@example.com":  "alice",
+		"DL6544-A@engie.com": "dl6544-a",
+		"bob":                "bob",
+		"jane_doe":           "jane_doe",
+	}
+	for in, want := range ok {
+		got, err := Sanitize(in)
+		if err != nil {
+			t.Errorf("Sanitize(%q) unexpected error: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("Sanitize(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

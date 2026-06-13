@@ -28,7 +28,16 @@ type fakeRunner struct {
 func (f *fakeRunner) run(_ context.Context, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, call{name, args})
 	if f.respond != nil {
-		return f.respond(name, args)
+		out, err := f.respond(name, args)
+		// Default `id -u` success to a regular uid when a test didn't specify one,
+		// so the provisioner's UID-floor check passes for "user exists" cases.
+		if name == "id" && err == nil && len(out) == 0 {
+			return []byte("1001\n"), nil
+		}
+		return out, err
+	}
+	if name == "id" {
+		return []byte("1001\n"), nil
 	}
 	return nil, nil
 }
