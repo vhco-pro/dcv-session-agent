@@ -1,4 +1,4 @@
-# workstation-agent
+# dcv-session-agent
 
 A small, dependency-light **Go agent + token verifier** that turns a single self-managed Amazon EC2 instance running [Amazon DCV](https://docs.aws.amazon.com/dcv/latest/adminguide/what-is-dcv.html) into a **shared multi-user GPU workstation** — where each colleague lands in their **own isolated desktop**, authenticated by their **own AWS IAM Identity Center (SSO) identity**, with **no per-user passwords, no broker, and no web portal**.
 
@@ -71,7 +71,7 @@ Two HTTP surfaces, both reached only over the localhost SSM tunnel (never intern
 ## Repository layout
 
 ```
-cmd/workstation-agent/   entrypoint (HTTP server wiring)
+cmd/dcv-session-agent/   entrypoint (HTTP server wiring)
 internal/identity/       map verified STS ARN → Linux username (shared rule with the client)
 internal/verifier/       DCV auth-token-verifier contract + presigned-token re-execution (SSRF-guarded)
 internal/session/        provisioning backends (local/sssd, auto-detected) + ensure-session + create-session

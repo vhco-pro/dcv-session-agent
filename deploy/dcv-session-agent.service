@@ -1,6 +1,6 @@
 # systemd unit for the multi-user DCV on-box agent.
-# Install: copy the binary to /usr/local/bin/workstation-agent and this unit to
-# /etc/systemd/system/, then: systemctl enable --now workstation-agent
+# Install: copy the binary to /usr/local/bin/dcv-session-agent and this unit to
+# /etc/systemd/system/, then: systemctl enable --now dcv-session-agent
 #
 # Both endpoints (/validate-authentication-token and /ensure-session) bind to
 # loopback only and are reached over the client's SSM port-forward. Session
@@ -16,7 +16,7 @@ Wants=dcvserver.service
 Type=simple
 User=root
 Environment=WSA_ADDR=127.0.0.1:8444
-ExecStart=/usr/local/bin/workstation-agent
+ExecStart=/usr/local/bin/dcv-session-agent
 Restart=on-failure
 RestartSec=2
 # Hardening: the agent needs root to manage sessions but nothing outside the host.

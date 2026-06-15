@@ -7,13 +7,13 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/vhco-pro/workstation-agent/internal/session"
+	"github.com/vhco-pro/dcv-session-agent/internal/session"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
-// status is the resolved runtime configuration, printed by `workstation-agent --status`
+// status is the resolved runtime configuration, printed by `dcv-session-agent --status`
 // so an operator can see what was auto-detected vs configured (spec §11 / AC-16).
 type status struct {
 	Version      string
@@ -41,7 +41,7 @@ func (s status) String() string {
 	if s.IdleTimeout > 0 {
 		idle = fmt.Sprintf("%s (poll every %s)", s.IdleTimeout, s.IdleInterval)
 	}
-	return fmt.Sprintf(`workstation-agent %s (%s)
+	return fmt.Sprintf(`dcv-session-agent %s (%s)
   listen:        %s
   provisioning:  %s   (auto-detected; override WSA_PROVISIONING)
   idle-stop:     %s

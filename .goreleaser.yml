@@ -1,8 +1,8 @@
-project_name: workstation-agent
+project_name: dcv-session-agent
 version: 2
 
 builds:
-  - main: ./cmd/workstation-agent
+  - main: ./cmd/dcv-session-agent
     env:
       # No CGO: a fully static binary the EC2 bootstrap can drop in /usr/local/bin.
       - CGO_ENABLED=0

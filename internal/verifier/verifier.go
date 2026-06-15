@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vhco-pro/workstation-agent/internal/authz"
+	"github.com/vhco-pro/dcv-session-agent/internal/authz"
 )
 
 // stsHostRE matches only the legitimate STS regional or global endpoints. The

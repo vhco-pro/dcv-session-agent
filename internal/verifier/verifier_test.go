@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vhco-pro/workstation-agent/internal/identity"
+	"github.com/vhco-pro/dcv-session-agent/internal/identity"
 )
 
 const stsXML = `<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">

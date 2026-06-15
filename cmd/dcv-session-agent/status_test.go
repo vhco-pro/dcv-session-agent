@@ -16,7 +16,7 @@ func TestStatusString_IdleEnabled(t *testing.T) {
 		IdleInterval: time.Minute,
 	}
 	out := s.String()
-	for _, want := range []string{"workstation-agent 1.2.3", "linux/amd64", "127.0.0.1:8444", "provisioning:  local", "idle-stop:     30m0s"} {
+	for _, want := range []string{"dcv-session-agent 1.2.3", "linux/amd64", "127.0.0.1:8444", "provisioning:  local", "idle-stop:     30m0s"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q\n%s", want, out)
 		}

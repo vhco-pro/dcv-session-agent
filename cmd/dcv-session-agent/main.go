@@ -1,4 +1,4 @@
-// Command workstation-agent is the on-box service for multi-user Amazon DCV.
+// Command dcv-session-agent is the on-box service for multi-user Amazon DCV.
 //
 // It serves two loopback HTTP surfaces, reached only over the client's SSM
 // port-forward (nothing here is internet-exposed):
@@ -19,11 +19,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/vhco-pro/workstation-agent/internal/authz"
-	"github.com/vhco-pro/workstation-agent/internal/identity"
-	"github.com/vhco-pro/workstation-agent/internal/idle"
-	"github.com/vhco-pro/workstation-agent/internal/session"
-	"github.com/vhco-pro/workstation-agent/internal/verifier"
+	"github.com/vhco-pro/dcv-session-agent/internal/authz"
+	"github.com/vhco-pro/dcv-session-agent/internal/identity"
+	"github.com/vhco-pro/dcv-session-agent/internal/idle"
+	"github.com/vhco-pro/dcv-session-agent/internal/session"
+	"github.com/vhco-pro/dcv-session-agent/internal/verifier"
 )
 
 func main() {
@@ -96,7 +96,7 @@ func main() {
 		Handler:           loopbackOnly(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Info("workstation-agent listening", "addr", addr, "provisioning", prov.Name(),
+	log.Info("dcv-session-agent listening", "addr", addr, "provisioning", prov.Name(),
 		"idleTimeout", accountant.IdleTimeout, "idleInterval", accountant.Interval)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Error("server exited", "err", err)

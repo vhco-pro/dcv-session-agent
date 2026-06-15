@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/vhco-pro/workstation-agent/internal/authz"
+	"github.com/vhco-pro/dcv-session-agent/internal/authz"
 )
 
 // AuthN verifies a presigned-identity token and returns the verified Linux
