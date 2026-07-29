@@ -18,6 +18,12 @@ import (
 // identity-mapping guard can never land a colleague in a system/service account.
 const minUserUID = 1000
 
+// homeRoot is where user homes live. On the multi-user workstation this is a
+// SEPARATE, PERSISTENT volume that outlives the instance, while the OS root
+// (including /etc/passwd) is wiped and rebuilt on every instance replace. That
+// asymmetry is what makes UID adoption necessary — see adoptHomeOwner.
+const homeRoot = "/home"
+
 // Runner executes a command and returns its combined output. It is the single
 // boundary to the OS, injected so the package is fully unit-testable.
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -58,13 +64,70 @@ func (p *LocalProvisioner) EnsureUser(ctx context.Context, username string) erro
 		}
 		return nil
 	}
+	args := []string{"--create-home", "--shell", "/bin/bash"}
+	if uid, gid, ok := p.adoptHomeOwner(ctx, username); ok {
+		args = append(args, "--uid", uid, "--gid", gid)
+	}
 	// `--` terminates options so a username can never be parsed as a flag (defense
 	// in depth; the identity layer already requires it to start with a letter).
-	if out, err := p.Run(ctx, "useradd", "--create-home", "--shell", "/bin/bash", "--", username); err != nil {
+	args = append(args, "--", username)
+	if out, err := p.Run(ctx, "useradd", args...); err != nil {
 		return fmt.Errorf("local: useradd %q: %w (%s)", username, err, out)
 	}
 	p.Log.Info("created local user", "user", username)
 	return nil
+}
+
+// adoptHomeOwner returns the uid/gid that a leftover home directory is already
+// owned by, so a recreated account reclaims its own files.
+//
+// Why this exists: /home is a persistent volume but /etc/passwd is not, so after
+// an instance replace `useradd` hands out UIDs in *connect order*. Change who
+// logs in first and everyone shifts by one. useradd will not chown an existing
+// home (it only warns "the home directory already exists"), so the user lands on
+// a home they cannot write and someone else silently inherits their files.
+// Adopting the directory's ownership makes the persisted home the source of
+// truth and is self-healing for accounts nobody enumerated in advance.
+//
+// Returns ok=false whenever adoption would be unsafe or pointless; the caller
+// then lets useradd pick a UID as before. Adoption is best-effort by design: a
+// user who cannot log in at all is worse than one with a shifted UID, so every
+// failure path here degrades rather than blocks.
+func (p *LocalProvisioner) adoptHomeOwner(ctx context.Context, username string) (uid, gid string, ok bool) {
+	home := homeRoot + "/" + username
+	out, err := p.Run(ctx, "stat", "-c", "%u:%g", home)
+	if err != nil {
+		return "", "", false // no leftover home — nothing to adopt
+	}
+	owner, group, found := strings.Cut(strings.TrimSpace(string(out)), ":")
+	if !found {
+		return "", "", false
+	}
+	n, err := strconv.Atoi(owner)
+	if err != nil || n < minUserUID {
+		// Never adopt a system/service UID: a root-owned home would otherwise
+		// escalate the new account straight past the minUserUID guard above.
+		p.Log.Warn("not adopting home ownership", "user", username, "uid", owner, "reason", "not a regular uid")
+		return "", "", false
+	}
+	// Only adopt a UID nobody else holds. If it is taken, the persisted state is
+	// already inconsistent; log it loudly and fall back rather than refusing to
+	// create the account (which would lock the user out entirely).
+	if _, err := p.Run(ctx, "getent", "passwd", owner); err == nil {
+		p.Log.Warn("home uid already in use by another account; not adopting",
+			"user", username, "home", home, "uid", owner)
+		return "", "", false
+	}
+	// useradd --gid requires the group to exist already.
+	if _, err := p.Run(ctx, "getent", "group", group); err != nil {
+		if out, err := p.Run(ctx, "groupadd", "--gid", group, "--", username); err != nil {
+			p.Log.Warn("could not recreate group for adopted home; not adopting",
+				"user", username, "gid", group, "err", err, "out", string(out))
+			return "", "", false
+		}
+	}
+	p.Log.Info("adopting uid/gid from persisted home", "user", username, "home", home, "uid", owner, "gid", group)
+	return owner, group, true
 }
 
 // SSSDProvisioner resolves users from a joined directory (AWS IAM Identity
