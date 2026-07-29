@@ -82,6 +82,131 @@ func TestLocalProvisioner_CreatesWhenAbsentSkipsWhenPresent(t *testing.T) {
 	})
 }
 
+// argsOf returns the args of the first call to name, or nil.
+func (f *fakeRunner) argsOf(name string) []string {
+	for _, c := range f.calls {
+		if c.name == name {
+			return c.args
+		}
+	}
+	return nil
+}
+
+// hasFlag reports whether args contains flag immediately followed by value.
+func hasFlag(args []string, flag, value string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+// A home left on the persistent /home volume by a previous instance must be
+// reclaimed by uid, otherwise the recreated account cannot write its own files
+// and a later user silently inherits them. Regression guard for the connect-order
+// UID shift observed on the multi-user workstation.
+func TestLocalProvisioner_AdoptsUIDFromPersistedHome(t *testing.T) {
+	// respondFor builds a runner where the user is absent, `stat` reports the
+	// given owner for the leftover home, and getent behaves per the flags.
+	respondFor := func(statOut string, uidTaken, groupExists bool) *fakeRunner {
+		return &fakeRunner{respond: func(name string, args []string) ([]byte, error) {
+			switch name {
+			case "id":
+				return nil, errors.New("no such user")
+			case "stat":
+				if statOut == "" {
+					return nil, errors.New("no such file")
+				}
+				return []byte(statOut + "\n"), nil
+			case "getent":
+				if len(args) > 0 && args[0] == "passwd" {
+					if uidTaken {
+						return []byte("bob:x:1002:..."), nil
+					}
+					return nil, errors.New("not found")
+				}
+				if len(args) > 0 && args[0] == "group" {
+					if groupExists {
+						return []byte("qj6559-a:x:1002:"), nil
+					}
+					return nil, errors.New("not found")
+				}
+			}
+			return nil, nil
+		}}
+	}
+
+	t.Run("free uid -> adopted, group recreated", func(t *testing.T) {
+		f := respondFor("1002:1002", false, false)
+		p := &LocalProvisioner{Run: f.run, Log: testLogger()}
+		if err := p.EnsureUser(context.Background(), "qj6559-a"); err != nil {
+			t.Fatal(err)
+		}
+		args := f.argsOf("useradd")
+		if !hasFlag(args, "--uid", "1002") || !hasFlag(args, "--gid", "1002") {
+			t.Errorf("expected adopted --uid/--gid 1002, got useradd %v", args)
+		}
+		// The group must be recreated first, or `useradd --gid` fails.
+		if g := f.argsOf("groupadd"); !hasFlag(g, "--gid", "1002") {
+			t.Errorf("expected groupadd --gid 1002, got %v", g)
+		}
+		// `--` must still terminate options so a username is never read as a flag.
+		if len(args) < 2 || args[len(args)-2] != "--" {
+			t.Errorf("expected `-- username` to terminate args, got %v", args)
+		}
+	})
+
+	t.Run("existing group -> adopted without groupadd", func(t *testing.T) {
+		f := respondFor("1002:1002", false, true)
+		p := &LocalProvisioner{Run: f.run, Log: testLogger()}
+		if err := p.EnsureUser(context.Background(), "qj6559-a"); err != nil {
+			t.Fatal(err)
+		}
+		if !hasFlag(f.argsOf("useradd"), "--uid", "1002") {
+			t.Errorf("expected adopted uid, got %v", f.argsOf("useradd"))
+		}
+		if f.argsOf("groupadd") != nil {
+			t.Error("must not recreate a group that already exists")
+		}
+	})
+
+	t.Run("uid already taken -> falls back, never blocks login", func(t *testing.T) {
+		f := respondFor("1002:1002", true, true)
+		p := &LocalProvisioner{Run: f.run, Log: testLogger()}
+		if err := p.EnsureUser(context.Background(), "qj6559-a"); err != nil {
+			t.Fatalf("must still create the account: %v", err)
+		}
+		if hasFlag(f.argsOf("useradd"), "--uid", "1002") {
+			t.Error("must not adopt a uid another account already holds")
+		}
+	})
+
+	t.Run("system uid -> never adopted", func(t *testing.T) {
+		f := respondFor("0:0", false, true)
+		p := &LocalProvisioner{Run: f.run, Log: testLogger()}
+		if err := p.EnsureUser(context.Background(), "qj6559-a"); err != nil {
+			t.Fatal(err)
+		}
+		if hasFlag(f.argsOf("useradd"), "--uid", "0") {
+			t.Error("adopting a root-owned home would escalate past the minUserUID guard")
+		}
+	})
+
+	t.Run("no persisted home -> plain useradd", func(t *testing.T) {
+		f := respondFor("", false, false)
+		p := &LocalProvisioner{Run: f.run, Log: testLogger()}
+		if err := p.EnsureUser(context.Background(), "newbie"); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range f.argsOf("useradd") {
+			if a == "--uid" {
+				t.Error("nothing to adopt; useradd should pick the uid")
+			}
+		}
+	})
+}
+
 func TestSSSDProvisioner_RequiresResolvableUser(t *testing.T) {
 	f := &fakeRunner{respond: func(name string, _ []string) ([]byte, error) {
 		if name == "getent" {
