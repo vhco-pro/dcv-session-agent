@@ -1,0 +1,42 @@
+name: CI
+
+# vhco-pro/go-release-workflow, separate-workflows arrangement.
+# Needs: RELEASE_APP_CLIENT_ID (variable), RELEASE_APP_PRIVATE_KEY (secret).
+# The App's tag push starts release.yml; so does a tag pushed by hand.
+#
+# Runs on branch pushes, not pull_request: GitVersion needs the real branch,
+# and a PR shows these push checks on its head commit. A private repository
+# that runs CI only on PRs may use pull_request instead; those runs never tag.
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: michielvha/go-ci-action@ab14d6420148179e8d20ecc0b7cb89760193cb37 # v0.1.0
+
+  # Tags main, and a branch whose open PR has the release:preview label at this
+  # commit. Every other run only calculates the version.
+  version:
+    needs: [verify]
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: vhco-pro/version-workflow/.github/workflows/version.yml@3b78b04df802ea1592cbe19338d7a882d1888389 # v0.1.0
+    with:
+      release-app-client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+    secrets:
+      release-app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
